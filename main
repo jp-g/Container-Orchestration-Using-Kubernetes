@@ -1,0 +1,230 @@
+To deploy a multi-tier application based on PHP and MySQL using the Kubernetes dashboard, follow these steps:
+
+    Set up a Kubernetes cluster on your lab machine using kubeadm, kubectl, kubelet, and Docker. 
+    Create a namespace called cep-project1:
+
+bash
+kubectl create namespace cep-project1
+
+    Create a service account with the name Sandry and assign her an admin role:
+
+bash
+kubectl create serviceaccount Sandry -n cep-project1
+kubectl create clusterrolebinding Sandry-admin --clusterrole=admin --serviceaccount=cep-project1:Sandry
+
+    Set up an NFS storage server on node3 for the WordPress and MySQL Pods to use.
+    Create static volumes for the WordPress and MySQL Pods to use the NFS storage:
+
+yaml
+# wordpress-pv.yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: wordpress-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteMany
+  nfs:
+    server: node3
+    path: /path/to/wordpress
+
+# mysql-pv.yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mysql-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteMany
+  nfs:
+    server: node3
+    path: /path/to/mysql
+
+bash
+kubectl apply -f wordpress-pv.yaml -n cep-project1
+kubectl apply -f mysql-pv.yaml -n cep-project1
+
+    Create a MySQL Service and Deployment:
+
+yaml
+# mysql-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+spec:
+  selector:
+    app: mysql
+  ports:
+    - protocol: TCP
+      port: 3306
+      targetPort: 3306
+
+# mysql-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:5.7
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: password
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: mysql-persistent-storage
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: mysql-persistent-storage
+          persistentVolumeClaim:
+            claimName: mysql-pvc
+
+bash
+kubectl apply -f mysql-svc.yaml -n cep-project1
+kubectl apply -f mysql-deployment.yaml -n cep-project1
+
+    Create a WordPress Service and Deployment:
+
+yaml
+# wordpress-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress
+spec:
+  selector:
+    app: wordpress
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+
+# wordpress-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wordpress
+  template:
+    metadata:
+      labels:
+        app: wordpress
+    spec:
+      containers:
+        - name: wordpress
+          image: wordpress:latest
+          env:
+            - name: WORDPRESS_DB_HOST
+              value: mysql
+            - name: WORDPRESS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: password
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: wordpress-persistent-storage
+              mountPath: /var/www/html
+      volumes:
+        - name: wordpress-persistent-storage
+          persistentVolumeClaim:
+            claimName: wordpress-pvc
+
+bash
+kubectl apply -f wordpress-svc.yaml -n cep-project1
+kubectl apply -f wordpress-deployment.yaml -n cep-project1
+
+    Create a secret for the MySQL password:
+
+bash
+kubectl create secret generic mysql-secret --from-literal=password=YOUR_MYSQL_PASSWORD -n cep-project1
+
+    Create a config map for the non-sensitive data:
+
+bash
+kubectl create configmap wordpress-config --from-literal=non-sensitive-data=YOUR_CONFIG_DATA -n cep-project1
+
+    Update the WordPress Deployment to use the config map:
+
+yaml
+# wordpress-deployment.yaml
+...
+    spec:
+      containers:
+        - name: wordpress
+          ...
+          env:
+            - name: WORDPRESS_CONFIG
+              valueFrom:
+                configMapKeyRef:
+                  name: wordpress-config
+                  key: non-sensitive-data
+          ...
+
+    Verify that the MySQL Service is present before deploying the WordPress Pod:
+
+yaml
+# wordpress-deployment.yaml
+...
+    spec:
+      containers:
+        - name: wordpress
+          ...
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  if ! mysqladmin ping -h mysql -u root -pYOUR_MYSQL_PASSWORD; then
+                    exit 1
+                  fi
+          ...
+
+    Set the maximum quota for services and pods in the cep-project1 namespace:
+
+yaml
+# cep-project1-quota.yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cep-project1-quota
+spec:
+  hard:
+    services: "3"
+    pods: "3"
+
+bash
+kubectl apply -f cep-project1-quota.yaml -n cep-project1
+
+This should deploy the multi-tier application based on PHP and MySQL using the Kubernetes dashboard, with the specified requirements and configurations.
+Try Copilot
+Copilot is the best way to answer the hardest questions. Search the web more comprehensively than ever before.
+Related
+What is Kubernetes and how does it work
+What is the difference between a service account and a user account in Kubernetes
+How do you create a namespace in Kubernetes
